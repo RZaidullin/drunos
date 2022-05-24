@@ -98,26 +98,82 @@ public:
 
 };
 
+using link_pair = std::pair<std::pair<uint64_t,uint64_t>,std::pair<uint64_t,uint64_t>>;
+std::map<link_pair, std::vector<uint64_t>> link_tag;
+
+uint16_t getTag(oxm::switch_id id1, oxm::out_port outport, oxm::switch_id id2, oxm::in_port inport){
+    oxm::field_set tmp1;
+    oxm::field_set tmp2;
+    tmp1.modify(oxm::field<>(id1));
+    tmp1.modify(oxm::field<>(outport));
+    tmp2.modify(oxm::field<>(id2));
+    tmp2.modify(oxm::field<>(inport));
+    uint64_t sw1,sw2,iport,oport;
+    Packet& pkt1(tmp1);
+    Packet& pkt2(tmp2);
+    sw1 = pkt1.load(oxm::switch_id());
+    oport = pkt1.load(oxm::out_port());
+    sw2 = pkt2.load(oxm::switch_id());
+    iport = pkt2.load(oxm::in_port());
+    link_pair lnk({sw1,oport},{sw2,iport});
+    auto m_tags = link_tag[lnk];
+    std::vector<uint64_t> used_tags;
+    if(!m_tags.empty())
+        for (auto it : m_tags){
+            used_tags.push_back(it);
+        }
+    std::sort(used_tags.begin(),used_tags.end());
+    uint64_t prev = 1;
+    for (auto it : used_tags){
+        if (it == prev){prev++;};
+        if (it > prev){break;}
+    }
+    link_tag[lnk].push_back(prev);
+    return prev;
+}
+
 retic::policy route_policy(data_link_route route) {
     using namespace retic;
 
     const auto in_port = oxm::in_port();
     const auto switch_id = oxm::switch_id();
+    //static constexpr auto vlan_vid = oxm::vlan_vid();
+    //oxm::field<oxm::vlan_vid> vl;
 
     if (route.size() % 2 != 0){
         RUNOS_THROW( invalid_argument() );
     }
 
     policy p;
+    uint16_t prev = 1, vlan;
+    int beg = 1, good = 1;
     for (auto it = route.begin(); it != route.end(); it += 2){
         if (it->dpid != (it+1)->dpid){
             RUNOS_THROW( invalid_argument() );
         }
-        uint32_t inport = it->port;
-        uint32_t outport = (it+1)->port;
-        p = p + (filter(switch_id == it->dpid) >>
-                 filter(in_port == inport) >>
-                 fwd(outport));
+        if(beg and good){
+        //vlan_vid << vlan;
+            uint32_t inport = it->port;
+            uint32_t outport = (it+1)->port;
+            p = p + (filter(switch_id == it->dpid) >>
+                     filter(in_port == inport) >>
+                     >> fwd(outport));
+            beg = 0;
+        }
+        else{
+            uint32_t inport = it->port;
+            uint32_t outport = (it+1)->port;
+            vlan = getTag(it->dpid, it->port, (it+1)->port);
+            if(good){
+                p = p + (filter(switch_id == it->dpid) >>
+                         filter(in_port == inport) >> filter(oxm::vlan_vid() == prev) >>
+                         modify(oxm::vlan_vid() << vlan) >> fwd(outport));
+            }
+            p = p + (filter(switch_id == it->dpid) >>
+                     filter(in_port == inport) >>
+                     modify(oxm::vlan_vid() << vlan) >> fwd(outport));
+            
+        }
     }
     return p;
 }
@@ -166,6 +222,7 @@ void LearningSwitch::init(Loader *loader, const Config &)
 {
     auto topology = Topology::get(loader);
     auto db = std::make_shared<HostsDatabase>();
+    LOG(INFO) << "db initialized";
     m_stp = STP::get(loader);
 
     const auto ofb_in_port = oxm::in_port();
@@ -239,15 +296,20 @@ void LearningSwitch::init(Loader *loader, const Config &)
 
             auto target = db->query(dst_mac);
             auto source = db->query(src_mac);
+            //LOG(INFO) << "Routing from: " << source->dpid << " to: " << target->dpid;
 
             // Forward
             if (target) {
+                LOG(INFO) << "Routing from: " << source->dpid << " to: " << target->dpid;
                 auto route = topology
                              ->computeRoute(source->dpid, target->dpid);
                 if (not route.empty() or target->dpid == source->dpid){
                     route.insert(route.begin(), *source);
                     route.push_back(*target);
                     DVLOG(10) << "Forwarding packet from " << source->dpid
+                              << "to " << target->dpid << " through route : "
+                              << route;
+                    LOG(INFO) << "Forwarding packet from " << source->dpid
                               << "to " << target->dpid << " through route : "
                               << route;
                     return route_policy(route);

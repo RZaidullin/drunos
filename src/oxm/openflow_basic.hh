@@ -126,7 +126,7 @@ struct arp_op : define_printable_ofb_type
     < arp_op, of::oxm::basic_match_fields::ARP_OP, 16, &types::print_arp_op, uint16_t >
 { };
 struct vlan_vid : define_ofb_type
-    < vlan_vid, of::oxm::basic_match_fields::VLAN_VID, 12, uint16_t >
+    < vlan_vid, of::oxm::basic_match_fields::VLAN_VID, 16, uint16_t >
 { };
 struct ipv6_src : define_ofb_type
     < ipv6_src, of::oxm::basic_match_fields::IPV6_SRC, 128, IPv6Addr, IPv6Addr, true >
