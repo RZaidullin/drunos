@@ -164,15 +164,18 @@ retic::policy route_policy(data_link_route route) {
             uint32_t inport = it->port;
             uint32_t outport = (it+1)->port;
             vlan = getTag(it->dpid, it->port, (it+1)->port);
-            if(good){
+            if(!good){
                 p = p + (filter(switch_id == it->dpid) >>
                          filter(in_port == inport) >> filter(oxm::vlan_vid() == prev) >>
                          modify(oxm::vlan_vid() << vlan) >> fwd(outport));
+                good = 1;
             }
-            p = p + (filter(switch_id == it->dpid) >>
-                     filter(in_port == inport) >>
-                     modify(oxm::vlan_vid() << vlan) >> fwd(outport));
-            
+            else{
+                p = p + (filter(switch_id == it->dpid) >>
+                         filter(in_port == inport) >>
+                         modify(oxm::vlan_vid() << vlan) >> fwd(outport));
+            }
+            prev = vlan;
         }
     }
     return p;
